@@ -1,0 +1,223 @@
+#include <GL/freeglut.h>
+#include <bits/stdc++.h>
+using namespace std;
+
+// --- Constants ---
+const int SCREEN_DIM = 700;
+const int GRID_STEP = 50;
+const int HALF_SCREEN = SCREEN_DIM / 2;
+const int MODE_INPUT = 1;
+const int MODE_DRAW = 2;
+
+// --- State Variables ---
+int current_mode = MODE_INPUT;
+int step_counter = 1; // 1: type, 2: xStart, 3: yStart, 4: xEnd, 5: yEnd, 6: width
+
+// Input buffers
+string buffer_text = "";
+string selected_type = "";
+string startX_str = "";
+string startY_str = "";
+string endX_str = "";
+string endY_str = "";
+string lineW_str = "";
+
+// Parsed integers
+int line_type = 0;
+int startX, startY, endX, endY;
+int line_width = 1;
+bool ready_to_draw = false;
+
+// --- Utility Functions ---
+int mapX(int x) { return x + HALF_SCREEN; }
+int mapY(int y) { return y + HALF_SCREEN; }
+
+void plot_point(int x, int y, float r, float g, float b) {
+    glColor3f(r, g, b);
+    glBegin(GL_POINTS);
+    glVertex2i(mapX(x), mapY(y));
+    glEnd();
+}
+
+void show_text_large(float x, float y, float r, float g, float b, const string& txt) {
+    glColor3f(r, g, b);
+    glRasterPos2f(x, y);
+    for (char c : txt) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, c);
+}
+
+void show_text_small(float x, float y, float r, float g, float b, const string& txt) {
+    glColor3f(r, g, b);
+    glRasterPos2f(x, y);
+    for (char c : txt) glutBitmapCharacter(GLUT_BITMAP_HELVETICA_10, c);
+}
+
+int safe_stoi(const string& txt) {
+    try {
+        if (!txt.empty() && (txt.length() > 1 || txt[0] != '-')) return stoi(txt);
+    } catch (...) {}
+    return 0;
+}
+
+// --- Bresenham's Algorithm ---
+void line_basic(int x1, int y1, int x2, int y2) {
+    int dx = abs(x2 - x1), dy = abs(y2 - y1);
+    int sx = (x1 < x2) ? 1 : -1;
+    int sy = (y1 < y2) ? 1 : -1;
+    int err = dx - dy;
+    int x = x1, y = y1;
+
+    while (true) {
+        plot_point(x, y, 0, 0, 0);
+        if (x == x2 && y == y2) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x += sx; }
+        if (e2 < dx) { err += dx; y += sy; }
+    }
+}
+
+void line_thick(int x1, int y1, int x2, int y2, int w) {
+    int halfW = (w - 1) / 2;
+    int dx = abs(x2 - x1), dy = abs(y2 - y1);
+    bool steep = dy > dx;
+
+    if (steep) {
+        for (int o = -halfW; o <= halfW; ++o)
+            line_basic(x1 + o, y1, x2 + o, y2);
+    } else {
+        for (int o = -halfW; o <= halfW; ++o)
+            line_basic(x1, y1 + o, x2, y2 + o);
+    }
+}
+
+// --- Drawing Functions ---
+void draw_grid() {
+    glColor3f(0, 0, 1);
+    glBegin(GL_LINES);
+    glVertex2i(0, HALF_SCREEN); glVertex2i(SCREEN_DIM, HALF_SCREEN);
+    glVertex2i(HALF_SCREEN, 0); glVertex2i(HALF_SCREEN, SCREEN_DIM);
+    glEnd();
+
+    for (int c = -HALF_SCREEN + GRID_STEP; c < HALF_SCREEN; c += GRID_STEP) {
+        if (c == 0) continue;
+        int sx = mapX(c), sy = mapY(c);
+        glBegin(GL_LINES);
+        glVertex2i(sx, HALF_SCREEN-3); glVertex2i(sx, HALF_SCREEN+3);
+        glVertex2i(HALF_SCREEN-3, sy); glVertex2i(HALF_SCREEN+3, sy);
+        glEnd();
+        if (c % GRID_STEP == 0) {
+            show_text_small(sx-10, HALF_SCREEN-15, 0,0,1, to_string(c));
+            show_text_small(HALF_SCREEN+5, sy-3, 0,0,1, to_string(c));
+        }
+    }
+}
+
+void input_screen() {
+    glClearColor(0.9f,0.9f,0.9f,1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    string line1="", line2="Enter value and press ENTER ⏎", val_text="";
+    float r=0,g=0,b=0;
+
+    switch(step_counter){
+        case 1: line1="STEP 1: Choose Line Type"; line2="1(Standard) or 2(Thick)";
+                val_text="Choice: "+buffer_text; r=0.5f; g=0; b=0; break;
+        case 2: line1="STEP 2: Start X (x1)"; val_text="x1: "+buffer_text; break;
+        case 3: line1="STEP 3: Start Y (y1)"; val_text="y1: "+buffer_text; break;
+        case 4: line1="STEP 4: End X (x2)"; val_text="x2: "+buffer_text; break;
+        case 5: line1="STEP 5: End Y (y2)"; val_text="y2: "+buffer_text; break;
+        case 6: line1="STEP 6: Line Width (W)"; line2="Width > 0, e.g., 3,5,7";
+                val_text="Width: "+buffer_text; r=0; g=0.5f; b=0; break;
+    }
+
+    show_text_large(100,600,0.1f,0.1f,0.1f,"Bresenham Line Input");
+    show_text_large(100,500,r,g,b,line1);
+    show_text_large(100,450,0.5f,0.5f,0.5f,line2);
+    show_text_large(100,300,0,0,0.8f,"Typing: "+val_text+"_");
+
+    string status="P1("+startX_str+","+startY_str+") P2("+endX_str+","+endY_str+") W:"+lineW_str;
+    show_text_small(100,50,0.3f,0.3f,0.3f,"Current: "+status);
+
+    glFlush();
+}
+
+void handle_input() {
+    bool valid=true;
+    if(buffer_text.empty() && step_counter!=1) valid=false;
+
+    if(valid){
+        if(step_counter==1){
+            if(buffer_text=="1" || buffer_text=="2") { selected_type=buffer_text; step_counter=2; }
+            else valid=false;
+        } else if(step_counter==2){ startX_str=buffer_text; step_counter=3; }
+        else if(step_counter==3){ startY_str=buffer_text; step_counter=4; }
+        else if(step_counter==4){ endX_str=buffer_text; step_counter=5; }
+        else if(step_counter==5){
+            endY_str=buffer_text;
+            if(selected_type=="1"){ ready_to_draw=true; current_mode=MODE_DRAW; }
+            else step_counter=6;
+        } else if(step_counter==6){ lineW_str=buffer_text; ready_to_draw=true; current_mode=MODE_DRAW; }
+    }
+
+    buffer_text="";
+    if(current_mode==MODE_DRAW){
+        line_type=safe_stoi(selected_type);
+        startX=safe_stoi(startX_str); startY=safe_stoi(startY_str);
+        endX=safe_stoi(endX_str); endY=safe_stoi(endY_str);
+        line_width=(line_type==2)? max(1,safe_stoi(lineW_str)) :1;
+
+        cout<<"Drawing P1("<<startX<<","<<startY<<") P2("<<endX<<","<<endY<<") W:"<<line_width<<"\n";
+    }
+
+    glutPostRedisplay();
+}
+
+// --- OpenGL Callbacks ---
+void display() {
+    if(current_mode==MODE_INPUT) input_screen();
+    else {
+        glClearColor(1,1,1,1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glPointSize(1.0);
+        draw_grid();
+
+        if(ready_to_draw){
+            glPointSize(1.5);
+            if(line_type==1) line_basic(startX,startY,endX,endY);
+            else if(line_type==2) line_thick(startX,startY,endX,endY,line_width);
+        }
+
+        show_text_small(10,10,0.5f,0,0,"Line Drawn. Close to exit.");
+        glFlush();
+    }
+}
+
+void keyboard(unsigned char key,int x,int y){
+    if(current_mode!=MODE_INPUT) return;
+
+    if(key==13) handle_input();
+    else if(key==8 || key==127){ if(!buffer_text.empty()) buffer_text.pop_back(); glutPostRedisplay();}
+    else if((key>='0' && key<='9') || key=='-'){ 
+        if(key=='-' && !buffer_text.empty()) return;
+        if(buffer_text.length()<5){ buffer_text+=key; glutPostRedisplay();}
+    }
+}
+
+void init_gl() {
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0,SCREEN_DIM,0,SCREEN_DIM);
+}
+
+int main(int argc,char** argv){
+    glutInit(&argc,argv);
+    glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB);
+    glutInitWindowSize(SCREEN_DIM,SCREEN_DIM);
+    glutInitWindowPosition(100,100);
+    glutCreateWindow("Bresenham Line Drawer");
+
+    init_gl();
+    glutDisplayFunc(display);
+    glutKeyboardFunc(keyboard);
+    glutMainLoop();
+    return 0;
+}
