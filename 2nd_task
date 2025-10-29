@@ -1,0 +1,124 @@
+#include <GL/freeglut.h>
+#include <bits/stdc++.h>
+using namespace std;
+
+// --- Global Constants ---
+const int CANVAS_SIZE = 700;
+const int ORIGIN_X = CANVAS_SIZE / 2;
+const int ORIGIN_Y = CANVAS_SIZE / 2;
+const int MAX_RAD = 300;
+const int CIRCLE_COUNT = 100; 
+const int MIN_RAD = 10;
+const int RAD_STEP = (MAX_RAD - MIN_RAD) / (CIRCLE_COUNT - 1);
+const float MAX_POINT_SIZE = 5.0f;
+
+// --- Utility Functions ---
+
+void convertHSVtoRGB(float h, float s, float v, float* r, float* g, float* b) {
+    if(s == 0.0f) {
+        *r = *g = *b = v;
+        return;
+    }
+    float h_norm = h / 60.0f;
+    int i = (int)floor(h_norm);
+    float f = h_norm - i;
+
+    float p = v * (1.0f - s);
+    float q = v * (1.0f - s * f);
+    float t = v * (1.0f - s * (1.0f - f));
+
+    switch(i % 6) {
+        case 0: *r = v; *g = t; *b = p; break;
+        case 1: *r = q; *g = v; *b = p; break;
+        case 2: *r = p; *g = v; *b = t; break;
+        case 3: *r = p; *g = q; *b = v; break;
+        case 4: *r = t; *g = p; *b = v; break;
+        case 5: *r = v; *g = p; *b = q; break;
+    }
+}
+
+void applyGradientColor(int idx) {
+    float t = (float)idx / (CIRCLE_COUNT - 1);
+    float hue = t * 360.0f;
+    float sat = 1.0f;
+    float val = 1.0f;
+    float r, g, b;
+    convertHSVtoRGB(hue, sat, val, &r, &g, &b);
+    glColor3f(r, g, b);
+}
+
+void plotPoint(int x, int y, int centerX, int centerY, float size) {
+    glPointSize(size);
+    glBegin(GL_POINTS);
+    glVertex2i(centerX + x, centerY + y);
+    glEnd();
+}
+
+// --- Midpoint Circle Functions ---
+void plotCircleSymPoints(int cx, int cy, int x, int y, float size) {
+    plotPoint(x, y, cx, cy, size);
+    plotPoint(-x, y, cx, cy, size);
+    plotPoint(x, -y, cx, cy, size);
+    plotPoint(-x, -y, cx, cy, size);
+    plotPoint(y, x, cx, cy, size);
+    plotPoint(-y, x, cx, cy, size);
+    plotPoint(y, -x, cx, cy, size);
+    plotPoint(-y, -x, cx, cy, size);
+}
+
+void drawMidpointCircle(int cx, int cy, int rad, float pointSize) {
+    int x = 0;
+    int y = rad;
+    int decision = 1 - rad;
+
+    plotCircleSymPoints(cx, cy, x, y, pointSize);
+
+    while(x < y) {
+        x++;
+        if(decision < 0) {
+            decision += 2 * x + 1;
+        } else {
+            y--;
+            decision += 2 * (x - y) + 1;
+        }
+        plotCircleSymPoints(cx, cy, x, y, pointSize);
+    }
+}
+
+// --- Display Function ---
+void renderScene() {
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    for(int i = 0; i < CIRCLE_COUNT; ++i) {
+        int rad = MIN_RAD + i * RAD_STEP;
+        float t = (float)i / (CIRCLE_COUNT - 1);
+        float pointSize = 1.0f + t * (MAX_POINT_SIZE - 1.0f);
+
+        applyGradientColor(i);
+        drawMidpointCircle(ORIGIN_X, ORIGIN_Y, rad, pointSize);
+    }
+
+    glFlush();
+}
+
+// --- Setup Functions ---
+void initialize() {
+    glClearColor(1.0, 1.0, 1.0, 1.0);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0, CANVAS_SIZE, 0, CANVAS_SIZE);
+}
+
+// --- Main Function ---
+int main(int argc, char** argv) {
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB);
+    glutInitWindowSize(CANVAS_SIZE, CANVAS_SIZE);
+    glutInitWindowPosition(100, 100);
+    glutCreateWindow("Concentric Circles with Smooth HSV Gradient");
+
+    initialize();
+    glutDisplayFunc(renderScene);
+    glutMainLoop();
+    return 0;
+}
