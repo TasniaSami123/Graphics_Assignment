@@ -1,0 +1,401 @@
+#include <GL/freeglut.h>
+#include <bits/stdc++.h>
+using namespace std;
+
+// --- Global Constants ---
+const int SCR_WIDTH = 1500;
+const int SCR_HEIGHT = 800;
+const int HEADER_HEIGHT = 70;
+const int AXIS_INTERVAL = 50;
+
+// Logical coordinate ranges
+const float LOG_RANGE_X = 700.0f;
+const float LOG_RANGE_Y = 365.0f;
+
+const float DRAW_AREA_W = SCR_WIDTH * 0.7;
+const float DRAW_AREA_H = SCR_HEIGHT - HEADER_HEIGHT;
+
+const int MODE_WINDOW_SELECT = 1;
+const int MODE_LINE_DRAW = 2;
+const int MODE_CLIP = 3;
+
+// --- Data Structures ---
+struct Vec2 {
+    float x, y;
+};
+
+struct Segment {
+    Vec2 start, end;
+};
+
+vector<Vec2> visible_pts;
+
+int current_mode = MODE_WINDOW_SELECT;
+int click_step = 0;
+float xmin_val = 0, ymin_val = 0, xmax_val = 0, ymax_val = 0;
+
+vector<Segment> segments_to_clip;
+Vec2 active_start = {0, 0};
+bool new_segment_flag = true;
+
+// --- Coordinate Transform Variables ---
+float offset_x = 0.0f;
+float offset_y = 0.0f;
+float scale_x = 1.0f;
+float scale_y = 1.0f;
+
+// --- Coordinate Transform Functions ---
+Vec2 to_screen(float lx, float ly) {
+    Vec2 pt;
+    pt.x = offset_x + lx * scale_x;
+    pt.y = offset_y + ly * scale_y;
+    return pt;
+}
+
+Vec2 to_logical(float sx, float sy) {
+    Vec2 pt;
+    pt.x = (sx - offset_x) / scale_x;
+    pt.y = (sy - offset_y) / scale_y;
+    return pt;
+}
+
+// --- Drawing Utilities ---
+void render_text(float x, float y, float r, float g, float b, const string& txt,
+                 void* font) {
+    glColor3f(r, g, b);
+    glRasterPos2f(x, y);
+    for(char c : txt) glutBitmapCharacter(font, c);
+}
+
+void draw_header(const string& title, const string& instr,
+                 float r, float g, float b) {
+    glColor3f(0.85f, 0.85f, 0.85f);
+    glBegin(GL_QUADS);
+    glVertex2f(0, SCR_HEIGHT - HEADER_HEIGHT);
+    glVertex2f(SCR_WIDTH, SCR_HEIGHT - HEADER_HEIGHT);
+    glVertex2f(SCR_WIDTH, SCR_HEIGHT);
+    glVertex2f(0, SCR_HEIGHT);
+    glEnd();
+
+    glColor3f(0.5f, 0.5f, 0.5f);
+    glLineWidth(2.0f);
+    glBegin(GL_LINES);
+    glVertex2f(0, SCR_HEIGHT - HEADER_HEIGHT);
+    glVertex2f(SCR_WIDTH, SCR_HEIGHT - HEADER_HEIGHT);
+    glEnd();
+
+    render_text(10, SCR_HEIGHT - 25, r, g, b, title, GLUT_BITMAP_HELVETICA_18);
+    render_text(10, SCR_HEIGHT - 50, 0.1f, 0.1f, 0.1f, instr, GLUT_BITMAP_HELVETICA_12);
+}
+
+void draw_clip_box() {
+    Vec2 p1 = to_screen(xmin_val, ymin_val);
+    Vec2 p2 = to_screen(xmax_val, ymin_val);
+    Vec2 p3 = to_screen(xmax_val, ymax_val);
+    Vec2 p4 = to_screen(xmin_val, ymax_val);
+
+    glColor3f(0,0,0);
+    glLineWidth(2.0f);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(p1.x, p1.y);
+    glVertex2f(p2.x, p2.y);
+    glVertex2f(p3.x, p3.y);
+    glVertex2f(p4.x, p4.y);
+    glEnd();
+}
+
+void draw_axes() {
+    Vec2 origin = to_screen(0.0f, 0.0f);
+    Vec2 xmax_s = to_screen(LOG_RANGE_X, 0.0f);
+    Vec2 xmin_s = to_screen(-LOG_RANGE_X, 0.0f);
+    Vec2 ymax_s = to_screen(0.0f, LOG_RANGE_Y);
+    Vec2 ymin_s = to_screen(0.0f, -LOG_RANGE_Y);
+
+    glColor3f(0.4f,0.4f,0.4f);
+    glLineWidth(1.5f);
+    glBegin(GL_LINES);
+    glVertex2f(xmin_s.x, origin.y);
+    glVertex2f(xmax_s.x, origin.y);
+    glVertex2f(origin.x, ymin_s.y);
+    glVertex2f(origin.x, ymax_s.y);
+    glEnd();
+
+    glColor3f(0.4f,0.4f,0.4f);
+    glLineWidth(1.0f);
+
+    int start_x = static_cast<int>(ceil(-LOG_RANGE_X / AXIS_INTERVAL)) * AXIS_INTERVAL;
+    for(int x=start_x; x<=LOG_RANGE_X; x+=AXIS_INTERVAL){
+        if(x==0) continue;
+        Vec2 tick = to_screen(x,0);
+        glBegin(GL_LINES);
+        glVertex2f(tick.x, origin.y-4);
+        glVertex2f(tick.x, origin.y+4);
+        glEnd();
+        render_text(tick.x+2, origin.y+5, 0.4f,0.4f,0.4f, to_string(x), GLUT_BITMAP_HELVETICA_10);
+    }
+
+    int start_y = static_cast<int>(ceil(-LOG_RANGE_Y / AXIS_INTERVAL)) * AXIS_INTERVAL;
+    for(int y=start_y; y<=LOG_RANGE_Y; y+=AXIS_INTERVAL){
+        if(y==0) continue;
+        Vec2 tick = to_screen(0,y);
+        glBegin(GL_LINES);
+        glVertex2f(origin.x-4, tick.y);
+        glVertex2f(origin.x+4, tick.y);
+        glEnd();
+        render_text(origin.x+5, tick.y+2, 0.4f,0.4f,0.4f, to_string(y), GLUT_BITMAP_HELVETICA_10);
+    }
+
+    render_text(origin.x+5, origin.y+5, 0.4f,0.4f,0.4f,"(0,0)", GLUT_BITMAP_HELVETICA_10);
+}
+
+// Liang-Barsky Clipping in logical coordinates
+bool clip_liang_barsky(float x0, float y0, float x1, float y1, float &t0, float &t1){
+    float dx = x1 - x0;
+    float dy = y1 - y0;
+    float p[4] = {-dx, dx, -dy, dy};
+    float q[4] = {x0 - xmin_val, xmax_val - x0, y0 - ymin_val, ymax_val - y0};
+    t0=0.0f; t1=1.0f;
+
+    for(int i=0;i<4;i++){
+        if(fabs(p[i])<1e-6){
+            if(q[i]<0) return false;
+        } else {
+            float t = q[i]/p[i];
+            if(p[i]<0) t0 = max(t0,t);
+            else t1 = min(t1,t);
+        }
+    }
+    if(t0>t1) return false;
+    return true;
+}
+
+// --- Display Functions ---
+void render_clip_mode(){
+    glClear(GL_COLOR_BUFFER_BIT);
+    visible_pts.clear();
+
+    const float list_start_x = SCR_WIDTH*0.7;
+    draw_header("STEP 3: Clipping Results (Liang-Barsky) - All Quadrants",
+                "Original Lines (RED) | Clipped Segments (GREEN) | Intersections (BLUE/P#)",
+                0.0f,0.5f,0.0f);
+
+    draw_axes();
+    draw_clip_box();
+
+    for(const auto &seg: segments_to_clip){
+        float x0=seg.start.x, y0=seg.start.y, x1=seg.end.x, y1=seg.end.y;
+        Vec2 p0_s = to_screen(x0,y0);
+        Vec2 p1_s = to_screen(x1,y1);
+
+        float t0,t1;
+        glColor3f(1,0,0);
+        glLineWidth(1.0f);
+        glBegin(GL_LINES);
+        glVertex2f(p0_s.x, p0_s.y);
+        glVertex2f(p1_s.x, p1_s.y);
+        glEnd();
+
+        if(clip_liang_barsky(x0,y0,x1,y1,t0,t1)){
+            float cx0 = x0 + t0*(x1-x0);
+            float cy0 = y0 + t0*(y1-y0);
+            float cx1 = x0 + t1*(x1-x0);
+            float cy1 = y0 + t1*(y1-y0);
+
+            Vec2 sp0 = to_screen(cx0,cy0);
+            Vec2 sp1 = to_screen(cx1,cy1);
+
+            visible_pts.push_back({cx0, cy0});
+            visible_pts.push_back({cx1, cy1});
+
+            glColor3f(0.0f,0.8f,0.0f);
+            glLineWidth(4.0f);
+            glBegin(GL_LINES);
+            glVertex2f(sp0.x, sp0.y);
+            glVertex2f(sp1.x, sp1.y);
+            glEnd();
+
+            glColor3f(0,0,0.8f);
+            glPointSize(8.0f);
+            glBegin(GL_POINTS);
+            glVertex2f(sp0.x, sp0.y);
+            glVertex2f(sp1.x, sp1.y);
+            glEnd();
+        }
+    }
+
+    float cur_y = SCR_HEIGHT - HEADER_HEIGHT - 30;
+    stringstream ss;
+    ss << fixed << setprecision(1);
+    for(size_t i=0;i<visible_pts.size();i++){
+        Vec2 pt = visible_pts[i];
+        Vec2 sp = to_screen(pt.x, pt.y);
+        ss.str("");
+        ss << "P" << i+1 << " (" << pt.x << "," << pt.y << ")";
+        render_text(list_start_x+10, cur_y, 0,0,0, ss.str(), GLUT_BITMAP_HELVETICA_10);
+        cur_y -= 15;
+        if(cur_y<10) break;
+    }
+
+    glColor3f(0.95f,0.95f,0.95f);
+    glBegin(GL_QUADS);
+    glVertex2f(list_start_x, 0);
+    glVertex2f(SCR_WIDTH, 0);
+    glVertex2f(SCR_WIDTH, SCR_HEIGHT-HEADER_HEIGHT);
+    glVertex2f(list_start_x, SCR_HEIGHT-HEADER_HEIGHT);
+    glEnd();
+
+    glColor3f(0.5f,0.5f,0.5f);
+    glLineWidth(1.0f);
+    glBegin(GL_LINES);
+    glVertex2f(list_start_x,0);
+    glVertex2f(list_start_x,SCR_HEIGHT-HEADER_HEIGHT);
+    glEnd();
+
+    render_text(list_start_x+10, SCR_HEIGHT-HEADER_HEIGHT-10, 0.2f,0.2f,0.2f,
+                "Visible/Intersection Points (Logical Coords):",
+                GLUT_BITMAP_HELVETICA_12);
+
+    glFlush();
+}
+
+void render_window_input(){
+    glClear(GL_COLOR_BUFFER_BIT);
+    string prompt;
+    if(click_step==0) prompt="Click 1/2: Select first diagonal corner of the Clipping Window.";
+    else {
+        stringstream ss;
+        ss << fixed << setprecision(1);
+        ss << "Click 2/2: Select the opposite diagonal corner. P1: (" << xmin_val << "," << ymin_val << ")";
+        prompt = ss.str();
+    }
+    draw_header("STEP 1: Define Clipping Window (All Quadrants)", prompt, 0,0.5f,0);
+    draw_axes();
+
+    if(click_step==1){
+        Vec2 p_s = to_screen(xmin_val, ymin_val);
+        glColor3f(0.8f,0.2f,0.2f);
+        glPointSize(8.0f);
+        glBegin(GL_POINTS);
+        glVertex2f(p_s.x, p_s.y);
+        glEnd();
+    }
+
+    glFlush();
+}
+
+void render_line_input(){
+    glClear(GL_COLOR_BUFFER_BIT);
+    string prompt;
+    if(new_segment_flag){
+        prompt="Click P1 to start a new line. Press SPACE to reset/start a new line.";
+    } else {
+        stringstream ss;
+        ss << fixed << setprecision(1);
+        ss << "Click P2 to connect. P1: (" << active_start.x << "," << active_start.y << ")";
+        prompt = ss.str();
+    }
+
+    draw_header("STEP 2: Draw Line Segments (Total Lines: "+to_string(segments_to_clip.size())+")",
+                prompt + " Press ENTER to Clip.",0.8f,0.4f,0);
+
+    draw_axes();
+    draw_clip_box();
+
+    glColor3f(0.5f,0.5f,0.5f);
+    glLineWidth(1.0f);
+    glBegin(GL_LINES);
+    for(const auto &seg: segments_to_clip){
+        Vec2 p0_s = to_screen(seg.start.x, seg.start.y);
+        Vec2 p1_s = to_screen(seg.end.x, seg.end.y);
+        glVertex2f(p0_s.x,p0_s.y);
+        glVertex2f(p1_s.x,p1_s.y);
+    }
+    glEnd();
+
+    if(!new_segment_flag){
+        Vec2 p_s = to_screen(active_start.x, active_start.y);
+        glColor3f(0,0,0.8f);
+        glPointSize(5.0f);
+        glBegin(GL_POINTS);
+        glVertex2f(p_s.x, p_s.y);
+        glEnd();
+    }
+
+    glFlush();
+}
+
+void display(){
+    if(current_mode==MODE_WINDOW_SELECT) render_window_input();
+    else if(current_mode==MODE_LINE_DRAW) render_line_input();
+    else render_clip_mode();
+}
+
+// --- Event Callbacks ---
+void mouse_cb(int btn, int state, int x, int y){
+    if(btn!=GLUT_LEFT_BUTTON || state!=GLUT_DOWN) return;
+    float sx=(float)x;
+    float sy=(float)(SCR_HEIGHT - y);
+    Vec2 pt = to_logical(sx, sy);
+
+    if(current_mode==MODE_WINDOW_SELECT){
+        if(click_step==0){ xmin_val=pt.x; ymin_val=pt.y; click_step=1; }
+        else{
+            xmax_val=pt.x; ymax_val=pt.y;
+            if(xmin_val>xmax_val) swap(xmin_val,xmax_val);
+            if(ymin_val>ymax_val) swap(ymin_val,ymax_val);
+            current_mode=MODE_LINE_DRAW;
+            click_step=0;
+        }
+    } else if(current_mode==MODE_LINE_DRAW){
+        if(sy>SCR_HEIGHT-HEADER_HEIGHT || sx>DRAW_AREA_W) return;
+        if(new_segment_flag){ active_start=pt; new_segment_flag=false; }
+        else {
+            segments_to_clip.push_back({active_start, pt});
+            active_start=pt;
+        }
+    }
+    glutPostRedisplay();
+}
+
+void keyboard_cb(unsigned char key,int x,int y){
+    if(current_mode==MODE_LINE_DRAW){
+        if(key==13) current_mode=MODE_CLIP;
+        else if(key==' ') new_segment_flag=true;
+    } else if(key=='r' || key=='R'){
+        current_mode=MODE_WINDOW_SELECT;
+        click_step=0;
+        xmin_val=ymin_val=xmax_val=ymax_val=0;
+        segments_to_clip.clear();
+        visible_pts.clear();
+        new_segment_flag=true;
+    }
+    glutPostRedisplay();
+}
+
+// --- Initialization ---
+void setup(){
+    glClearColor(1,1,1,1);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0,SCR_WIDTH,0,SCR_HEIGHT);
+
+    scale_x = DRAW_AREA_W/(2.0f*LOG_RANGE_X);
+    scale_y = DRAW_AREA_H/(2.0f*LOG_RANGE_Y);
+    offset_x = DRAW_AREA_W/2.0f;
+    offset_y = DRAW_AREA_H/2.0f;
+}
+
+int main(int argc,char** argv){
+    glutInit(&argc,argv);
+    glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB);
+    glutInitWindowSize(SCR_WIDTH,SCR_HEIGHT);
+    glutInitWindowPosition(100,100);
+    glutCreateWindow("Liang-Barsky Line Clipping (All Quadrants)");
+
+    setup();
+    glutDisplayFunc(display);
+    glutMouseFunc(mouse_cb);
+    glutKeyboardFunc(keyboard_cb);
+    glutMainLoop();
+    return 0;
+}
